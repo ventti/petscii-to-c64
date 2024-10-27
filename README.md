@@ -68,8 +68,6 @@ spin -vv -a dirart.d64 -o disk.d64 script
 
 Spindle 3.1 binaries from (spindle-3.1.zip)[https://hd0.linusakesson.net/files/spindle-3.1.zip] for Windows and Linux and a self-compiled macOS arm64 included for convenience
 
-[./tools/macos/arm64/spin](./tools/macos/arm64/spin) included
-
 ## Known issues and limitations
 
 * Number of lines can't be more than in the frame. If you want a long dir art, concatenate the PETSCII frames first manually.
