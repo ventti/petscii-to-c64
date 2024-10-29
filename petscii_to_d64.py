@@ -44,8 +44,9 @@ def parse_args():
     parser.add_argument('-l', '--lines', type=int, default=None, help='number of lines')
     parser.add_argument('-n', '--line-length', type=int, default=16, help='line length (default: 16)')
     parser.add_argument('-o', '--output', help='output file', required=True)
-    parser.add_argument('--disk-name', help='disk name', default='DISKNAME')
-    parser.add_argument('--disk-id', help='disk id', default='ID')
+    parser.add_argument('-i', '--input-disk', help='input disk image (if omitted, disk generated)', default=None)
+    parser.add_argument('--disk-name', help='disk name', default=None)
+    parser.add_argument('--disk-id', help='disk id', default=None)
     parser.add_argument('--verbose', '-v', help='verbose output', action='store_true')
     return parser.parse_args()
 
@@ -209,11 +210,17 @@ def main():
     # to bytearray
     disk_name = bytearray(args.disk_name.encode('ascii'))
     disk_id = bytearray(args.disk_id.encode('ascii'))
-    track_18 = generate_dir(entries, disk_name, disk_id)
+    overwrite = args.input_disk is None
 
-    d64 = bytearray([0x00] * 174848)
+    if args.input_disk:
+        with open(args.input_disk, 'rb') as fp:
+            d64 = bytearray(fp.read())
+        original_track_18 = d64[TRACK_18:TRACK_18 + 256 * 19]
+        track_18 = generate_dir(entries, disk_name, disk_id, original_track_18)
+    else:
+        d64 = bytearray([0x00] * 174848)
+        track_18 = generate_dir(entries, disk_name, disk_id)
     d64[TRACK_18:TRACK_18 + len(track_18)] = track_18
-
     with open(output, 'wb') as fp:
         fp.write(d64)
 
