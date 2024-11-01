@@ -43,6 +43,7 @@ def parse_args():
     parser.add_argument('-f', '--frame', help='frame name (default: frame0000)', default='frame0000')
     parser.add_argument('-l', '--lines', type=int, default=None, help='number of lines')
     parser.add_argument('-n', '--line-length', type=int, default=16, help='line length (default: 16)')
+    parser.add_argument('-s', '--offset', type=int, default=0, help='line offset (when converting art wider than 16 chars)')
     parser.add_argument('-o', '--output', help='output file', required=True)
     parser.add_argument('-i', '--input-disk', help='input disk image (if omitted, disk generated)', default=None)
     parser.add_argument('--disk-name', help='disk name', default=None)
@@ -101,65 +102,159 @@ def parse_petscii_c_meta(c):
             log(f"{meta}")
             return meta
 
-def generate_dir(filenames, disk_name, disk_id):
+def update_dir(track_18, filenames, disk_name=None, disk_id=None):
+    # to bytearray
+    log(f"Updating the directory with {len(filenames)} entries")
     ns = 1
     this_sector = SECTORS[0]
     next_sector = SECTORS[ns]
     # next_track = 18
-    track_18_data = bytearray([0x00] * 256 * 19)
-    track_18_data[0:256] = generate_dir_header(disk_name, disk_id)
+    original_header = track_18[0:256]
+    hex_dump(original_header, title="Original header")
+    track_18[0:256] = update_dir_header(original_header, disk_name, disk_id)
+    hex_dump(track_18[0:256], title="Updated header")
+    # files in chunks of 8
+    for i, _ in enumerate(filenames):
+        if i % 8 == 0:
+            offset = 256 * this_sector
+            sector = track_18[offset:offset+256]
+            sector = update_dir_sector(next_sector, filenames[i:i + 8], sector)
+            track_18[offset:offset+256] = sector
+            try:
+                ns += 1
+                this_sector = next_sector
+                next_sector = SECTORS[ns]
+            except IndexError:
+                break
+            # next_track = 18
+    #original_track_18_data.ljust(256 * 19, b'\x00')  # pad track
+    return track_18
+
+def is_zeros(data):
+    for b in data:
+        if b != 0:
+            return False
+    return True
+
+def generate_dir(track_18_data, filenames, disk_name, disk_id):
+    log(f"Generating the directory with {len(filenames)} entries")
+    ns = 1
+    this_sector = SECTORS[0]
+    next_sector = SECTORS[ns]
+    # next_track = 18
+    if track_18_data is None:
+        track_18_data = bytearray([0x00] * 256 * 19)
+    track_18_data[0:256] = generate_dir_header(track_18_data[0:256], disk_name=disk_name, disk_id=disk_id)
 
     # files in chunks of 8
     for i, filename in enumerate(filenames):
         if i % 8 == 0:
-            sector = generate_dir_sector(next_sector, filenames[i:i + 8])
             offset = 256 * this_sector
+            sector = track_18_data[offset:offset+256]
+            sector = generate_dir_sector(sector, next_sector, filenames[i:i + 8])
             track_18_data[offset:offset+256] = sector
             try:
                 ns += 1
                 this_sector = next_sector
                 next_sector = SECTORS[ns]
-            except:
+            except IndexError:
                 break
             # next_track = 18
     track_18_data.ljust(256 * 19, b'\x00')  # pad track
     return track_18_data
 
-def generate_dir_header(disk_name, disk_id):
-    header = bytearray([0x00] * 256)
-    header[0:2] = b'\x12\x01'
-    header[2] = 0x41
-    header[0x90:0xA0] = disk_name.ljust(16, b'\xA0')
-    header[0xA0:0xA2] = b'\xA0\xA0'
-    header[0xA2:0xA4] = disk_id
-    header[0xA4] = 0xA0
-    header[0xA5:0xA7] = b'\x32\x41'
-    header[0xA7:0xAA] = b'\xA0\xA0\xA0'
+def update_dir_header(header, disk_name=None, disk_id=None):
+    if disk_name is not None:
+        disk_name = bytearray(disk_name.encode('ascii'))
+        header[0x90:0xA0] = disk_name.ljust(16, b'\xA0')
+    if disk_id is not None:
+        disk_id = bytearray(disk_id.encode('ascii'))
+        header[0xA2:0xA4] = disk_id
     return header
 
-def generate_dir_sector(next_sector, filenames):
-    next_track = 18
-    sector_data = bytearray([0x00] * 256)
+def generate_dir_header(header, disk_name, disk_id):
+    if is_zeros(header):
+        header[0:2] = b'\x12\x01'
+        header[2] = 0x41
+        header[0x90:0xA0] = b'\xA0' * 16
+        header[0xA0:0xA4] = b'\xA0\xA0\xA0\xA0\xA0'
+        header[0xA5:0xA7] = b'\x32\x41'
+        header[0xA7:0xAA] = b'\xA0\xA0\xA0'
+    header = update_dir_header(header, disk_name, disk_id)
+    return header
+
+def update_dir_sector(next_sector, filenames, sector_data):
+    hex_dump(sector_data, title="Sector data (old)")
+    #next_track = 18
     for i, filename in enumerate(filenames):
-        entry_data = generate_entry(next_track, next_sector, filename)
+        entry = sector_data[i * 32:i * 32 + 32]
+        # jos filename löytyy ja sektorissa on siinä kohtaa 0x00 * 32, lisää kaikki kentät.
+        entry_data = update_entry(entry, filename)
         sector_data[i * 32:i * 32 + 32] = entry_data
-        next_sector = 0x00  # nonzero only for first entry
-        next_track = 0x00  # nonzero only for first entry
+        #next_sector = 0x00  # nonzero only for first entry
+        #next_track = 0x00  # nonzero only for first entry
+    hex_dump(sector_data, title="Sector data (updated)")
     return sector_data
 
-def generate_entry(next_track, next_sector, filename):
-    # if len(filename) < 16:
-    #    filename += [0xA0] * (16 - len(filename))
-    entry = bytearray([0x00] * 32)
-    entry[0x00] = next_track
-    entry[0x01] = next_sector
-    entry[0x02] = 0x81  # file type
-    entry[0x03] = 0x11  # file track
-    entry[0x04] = 0x00  # file sector
-    entry[0x05:0x15] = filename.ljust(16, b'\xA0')  # file size
-    entry[0x1e] = 0x01  # zero size
-    entry[0x1f] = 0x00  # zero size
+def generate_dir_sector(sector, next_sector, filenames):
+    next_track = 18
+    for i, filename in enumerate(filenames):
+        entry_data = sector[i*32:i*32+32]
+        entry_data = generate_entry(entry_data,next_track, next_sector, filename)
+        sector[i * 32:i * 32 + 32] = entry_data
+        next_sector = 0x00  # nonzero only for first entry
+        next_track = 0x00  # nonzero only for first entry
+    return sector
+
+def generate_entry(entry, next_track, next_sector, filename):
+    #entry = bytearray([0x00] * 32)
+    if is_zeros(entry):
+        entry[0x00] = next_track
+        entry[0x01] = next_sector
+        entry[0x02] = 0x81  # file type
+        entry[0x03] = 0x11  # file track
+        entry[0x04] = 0x00  # file sector
+        entry[0x05:0x15] = bytearray([0xA0] * 16)  # file size
+        entry[0x1e] = 0x01  # zero size
+        entry[0x1f] = 0x00  # zero size
+    else:
+        hex_dump(entry,title=f"Entry data (orig)")
+    entry = update_entry(entry, filename)
+    hex_dump(entry, title=f"Entry data")
     return entry
+
+def update_entry(entry, filename):
+    entry[0x05:0x15] = filename.ljust(16, b'\xA0')  # file size
+    return entry
+
+def hex_dump(data, linelen=16, printable=None, substitute='?', title=None):
+    if title is not None:
+        log(title)
+        log('=' * len(title))
+    if printable is None:
+        printable = string.digits + string.ascii_letters + string.punctuation + " "
+        
+    if isinstance(data, bytearray):
+        data = [data]  # Convert single bytearray to a list for uniform handling
+
+    i = 0
+    for chunk in data:
+        j = 0
+        while j < len(chunk):
+            subchunk = chunk[j:j + linelen]
+            datahex = ''
+            decoded = ''
+            
+            for ch in subchunk:
+                datahex += f"{ch:02x} "
+                decoded += chr(ch) if chr(ch) in printable else substitute
+                
+            datahex += f" | {decoded} |"
+
+            log(f"{i:04x}:{(i + linelen):04x} : {datahex}")
+            
+            i += linelen
+            j += linelen
 
 def main():
     args = parse_args()
@@ -175,7 +270,6 @@ def main():
         data[i] = screen_to_petscii(data[i])
     if args.output:
         output = args.output
-        closefd = True
         output_name = args.output
     log(f"Convert input: {args.filename}, "
         f"Data length: {len(data)}, "
@@ -183,43 +277,41 @@ def main():
         f"Output: {output_name}")
 
     linelen = args.line_length
+    offset = args.offset
 
-    printable = string.digits + string.ascii_letters + string.punctuation + " "
+    if args.lines is not None:
+        max_lines = args.lines
+    else:
+        max_lines = meta["height"]
 
-    entries = []
+    filenames = []
+
+    for line in range(max_lines):
+        start_offset = line * meta["width"] + offset
+        end_offset = start_offset + linelen
+        filename = data[start_offset:end_offset]
+        filenames.append(filename)
+
+    hex_dump(filenames, linelen=linelen)
+
     i = 0
-    while i < len(data):
-        filename = data[i:i + linelen]
-        datahex = ''
-        decoded = ''
-        for ch in filename:
-            datahex += f"{ch:02x} "
-            if chr(ch) in printable:
-                decoded += chr(ch)
-            else:
-                decoded += '?'
 
-        entries.append(filename)  # .to_bytes(1))
+#    while i < len(data):
+#        filename = data[i:i + linelen]
+#        filenames.append(filename)  # .to_bytes(1))
         # fp.write(ch.to_bytes(1))#, byteorder='big'))
         # fp.write(b'\n')
-        datahex += f" | {decoded} |"
-        log(f"{i:04x}:{(i + linelen):04x} : {datahex}")
-        i += linelen
-        if args.lines and len(entries) >= args.lines:
-            break
-    # to bytearray
-    disk_name = bytearray(args.disk_name.encode('ascii'))
-    disk_id = bytearray(args.disk_id.encode('ascii'))
-    overwrite = args.input_disk is None
 
     if args.input_disk:
         with open(args.input_disk, 'rb') as fp:
             d64 = bytearray(fp.read())
-        original_track_18 = d64[TRACK_18:TRACK_18 + 256 * 19]
-        track_18 = generate_dir(entries, disk_name, disk_id, original_track_18)
     else:
         d64 = bytearray([0x00] * 174848)
-        track_18 = generate_dir(entries, disk_name, disk_id)
+
+#        track_18 = update_dir(track_18, filenames, args.disk_name, args.disk_id)
+#    else:
+    track_18 = d64[TRACK_18:TRACK_18 + 256 * 19]
+    track_18 = generate_dir(track_18, filenames, args.disk_name, args.disk_id)
     d64[TRACK_18:TRACK_18 + len(track_18)] = track_18
     with open(output, 'wb') as fp:
         fp.write(d64)
