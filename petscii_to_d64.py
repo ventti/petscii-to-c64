@@ -185,7 +185,6 @@ def generate_dir_header(header, disk_name, disk_id):
 
 def update_dir_sector(next_sector, filenames, sector_data):
     hex_dump(sector_data, title="Sector data (old)")
-    #next_track = 18
     for i, filename in enumerate(filenames):
         entry = sector_data[i * 32:i * 32 + 32]
         # jos filename löytyy ja sektorissa on siinä kohtaa 0x00 * 32, lisää kaikki kentät.
@@ -208,9 +207,9 @@ def generate_dir_sector(sector, next_sector, filenames):
 
 def generate_entry(entry, next_track, next_sector, filename):
     #entry = bytearray([0x00] * 32)
+    entry[0x00] = next_track
+    entry[0x01] = next_sector
     if is_zeros(entry):
-        entry[0x00] = next_track
-        entry[0x01] = next_sector
         entry[0x02] = 0x81  # file type
         entry[0x03] = 0x11  # file track
         entry[0x04] = 0x00  # file sector
