@@ -15,6 +15,8 @@ SECTORS = [1, 4, 7, 10, 13, 16, 2, 5, 8, 11, 14, 17, 3, 6, 9, 12, 15, 18]  # sec
 def screen_to_petscii(c):
     if c >= 0 and c <= 0x1f:
         p = c + 0x40
+    elif c == 0xa0: # allow line end
+        p = c
     elif c >= 0x20 and c <= 0x3f:
         p = c
     elif c >= 0x40 and c <= 0x5d:
