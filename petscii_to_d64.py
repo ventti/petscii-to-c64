@@ -1,6 +1,7 @@
 # Convert dirart from Marq's PETSCII editor .c to a dummy .d64 file.
 #
 # Generates a bare-minimum .d64 file just enough to hold the directory entries.
+# Ref: http://unusedino.de/ec64/technical/formats/d64.html
 #
 # by Vent/EXTEND 2024
 #
@@ -12,10 +13,15 @@ import argparse
 TRACK_18 = 0x16500  # directory track
 SECTORS = [1, 4, 7, 10, 13, 16, 2, 5, 8, 11, 14, 17, 3, 6, 9, 12, 15, 18]  # sector interleaving
 
+ASM_DUMP_TEMPLATE = {
+    'tass64': '{label}:   .byte {name} ; {comment}',
+    'kickass': '{label}:  .byte {name} // {comment}'
+}
+
 def screen_to_petscii(c):
     if c >= 0 and c <= 0x1f:
         p = c + 0x40
-    elif c == 0xa0: # allow line end
+    elif c == 0xa0: # hack: allow line end
         p = c
     elif c >= 0x20 and c <= 0x3f:
         p = c
@@ -46,8 +52,12 @@ def parse_args():
     parser.add_argument('-l', '--lines', type=int, default=None, help='number of lines')
     parser.add_argument('-n', '--line-length', type=int, default=16, help='line length (default: 16)')
     parser.add_argument('-s', '--offset', type=int, default=0, help='line offset (when converting art wider than 16 chars)')
-    parser.add_argument('-o', '--output', help='output file', required=True)
+    parser.add_argument('-o', '--output', help='output file (if omitted, only dump asm)', default=None)
     parser.add_argument('-i', '--input-disk', help='input disk image (if omitted, disk generated)', default=None)
+    parser.add_argument('--asm-dump', help='filename to dump filenames as assembly code (default: <FILENAME>.s)', nargs="?", const="", default=None)
+    parser.add_argument('--asm-format', help='asm dump format (default: tass64)', choices=['tass64', 'kickass'], default='tass64')
+    parser.add_argument('--asm-truncate', help='truncate asm dump filenames to N characters (default: 16)', type=int, default=16)
+    parser.add_argument('--cc1541-dump', help='filename to dump filenames as cc1541 code (default: <FILENAME>.txt)', nargs="?", const="", default=None)
     parser.add_argument('--disk-name', help='disk name', default=None)
     parser.add_argument('--disk-id', help='disk id', default=None)
     parser.add_argument('--verbose', '-v', help='verbose output', action='store_true')
@@ -259,8 +269,27 @@ def hex_dump(data, linelen=16, printable=None, substitute='?', title=None):
 
 def main():
     args = parse_args()
+    
     global verbose
     verbose = args.verbose
+    output = args.output
+    asm_dump = args.asm_dump
+    cc1541_dump = args.cc1541_dump
+
+    if asm_dump is None:
+        if args.filename.lower().endswith(".c"):
+            asm_dump = args.filename[:-2] + ".s"
+        else:
+            asm_dump = args.filename + ".s"
+
+    if cc1541_dump is None:
+        if args.filename.lower().endswith(".c"):
+            cc1541_dump = args.filename[:-2] + ".txt"
+        else:
+            cc1541_dump = args.filename + ".txt"
+
+    asm_truncate = args.asm_truncate
+
     with open(args.filename, 'rt') as fp:
         c = fp.read()
     meta = parse_petscii_c_meta(c)
@@ -269,13 +298,12 @@ def main():
 
     for i in range(len(data)):
         data[i] = screen_to_petscii(data[i])
-    if args.output:
-        output = args.output
-        output_name = args.output
-    log(f"Convert input: {args.filename}, "
-        f"Data length: {len(data)}, "
-        f"N of lines: {args.lines} Line length: {args.line_length}, "
-        f"Output: {output_name}")
+    
+    if output:
+        log(f"Convert input: {args.filename}, "
+            f"Data length: {len(data)}, "
+            f"N of lines: {args.lines} Line length: {args.line_length}, "
+            f"Output: {output}")
 
     linelen = args.line_length
     offset = args.offset
@@ -297,26 +325,44 @@ def main():
 
     i = 0
 
-#    while i < len(data):
-#        filename = data[i:i + linelen]
-#        filenames.append(filename)  # .to_bytes(1))
-        # fp.write(ch.to_bytes(1))#, byteorder='big'))
-        # fp.write(b'\n')
-
     if args.input_disk:
         with open(args.input_disk, 'rb') as fp:
             d64 = bytearray(fp.read())
     else:
         d64 = bytearray([0x00] * 174848)
 
-#        track_18 = update_dir(track_18, filenames, args.disk_name, args.disk_id)
-#    else:
     track_18 = d64[TRACK_18:TRACK_18 + 256 * 19]
     track_18 = generate_dir(track_18, filenames, args.disk_name, args.disk_id)
-    d64[TRACK_18:TRACK_18 + len(track_18)] = track_18
-    with open(output, 'wb') as fp:
-        fp.write(d64)
+    
+    names = []  # another hack for duplicate filenames in asm dump for Krill's loader
+    if cc1541_dump:
+        with open(cc1541_dump, 'w') as fp:
+            for i, filename in enumerate(filenames):
+                name = ''.join([f'#{ch:02x}' for ch in filename]).split('#a0')[0]
+                fp.write(f"{name}\n")
+        log(f"Dumped filenames as cc1541 code to {cc1541_dump}")
+    if asm_dump:
+        with open(asm_dump, 'w') as fp:
+            for i, filename in enumerate(filenames):
+                label = f"fname{i:02x}"
+                # cut filename at 0xa0
+                filename = filename.split(b'\xa0')[0]
+                fnamebytes = filename[:asm_truncate]
+                name = ','.join([f"${ch:02x}" for ch in fnamebytes]) + ",0"
+                comment=''.join([chr(ch) if ch >= 0x20 and ch <= 0x7f else '.' for ch in filename])
+                if name in names:
+                    orig = names.index(name)
+                    comment += f" WARNING: duplicate of fname{orig:02x}"
+                names.append(name)
+                asm_line = ASM_DUMP_TEMPLATE[args.asm_format].format(label=label, name=name.ljust(asm_truncate * 4 + 1), comment=comment)
+                fp.write(asm_line + '\n')
+        log(f"Dumped filenames as assembly code to {asm_dump}")
 
+    if output:
+        d64[TRACK_18:TRACK_18 + len(track_18)] = track_18
+        with open(output, 'wb') as fp:
+            fp.write(d64)
+        log(f"Wrote filenames to {output}")
     log("Done.")
 
 if __name__ == '__main__':

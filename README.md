@@ -9,7 +9,12 @@ This tool can be used for exporting the graphics and then e.g. imported as a Spi
 ## Usage
 
 ```
-usage: petscii_to_d64.py [-h] [-f FRAME] [-l LINES] [-n LINE_LENGTH] -o OUTPUT [--disk-name DISK_NAME]
+usage: petscii_to_d64.py [-h] [-f FRAME] [-l LINES] [-n LINE_LENGTH]
+                         [-s OFFSET] [-o OUTPUT] [-i INPUT_DISK]
+                         [--asm-dump [ASM_DUMP]]
+                         [--asm-format {tass64,kickass}]
+                         [--asm-truncate ASM_TRUNCATE]
+                         [--cc1541-dump [CC1541_DUMP]] [--disk-name DISK_NAME]
                          [--disk-id DISK_ID] [--verbose]
                          filename
 
@@ -20,14 +25,25 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -f FRAME, --frame FRAME
-                        frame name (default: frame0000)
-  -l LINES, --lines LINES
-                        number of lines
-  -n LINE_LENGTH, --line-length LINE_LENGTH
+  -f, --frame FRAME     frame name (default: frame0000)
+  -l, --lines LINES     number of lines
+  -n, --line-length LINE_LENGTH
                         line length (default: 16)
-  -o OUTPUT, --output OUTPUT
-                        output file
+  -s, --offset OFFSET   line offset (when converting art wider than 16 chars)
+  -o, --output OUTPUT   output file (if omitted, only dump asm)
+  -i, --input-disk INPUT_DISK
+                        input disk image (if omitted, disk generated)
+  --asm-dump [ASM_DUMP]
+                        filename to dump filenames as assembly code (default:
+                        <FILENAME>.s)
+  --asm-format {tass64,kickass}
+                        asm dump format (default: tass64)
+  --asm-truncate ASM_TRUNCATE
+                        truncate asm dump filenames to N characters (default:
+                        16)
+  --cc1541-dump [CC1541_DUMP]
+                        filename to dump filenames as cc1541 code (default:
+                        <FILENAME>.txt)
   --disk-name DISK_NAME
                         disk name
   --disk-id DISK_ID     disk id
